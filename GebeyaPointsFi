@@ -1,0 +1,846 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from scipy.stats import truncnorm
+import matplotlib.pyplot as plt
+
+# ------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------
+st.set_page_config(
+    page_title="Gebeya PointsFi Simulator",
+    layout="wide"
+)
+
+st.title("🌍 Gebeya PointsFi Framework — 1-Year Simulator")
+st.caption("Nomiks · simulate G-Points, tiers and G-Token conversion over 1 year.")
+
+TIER_LABELS = ["Nile", "Baobab", "Sankofa", "Kilimanjaro"]
+
+# ------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------
+FREQUENCY_HELP = """
+**Frequency semantics**
+
+- **Daily**: task can be completed multiple times per week (e.g. daily login).  
+- **Weekly**: task happens at most once per week on average.  
+- **Monthly**: task happens a few times per year.  
+- **One-time**: at most once per user (e.g. KYC, 2FA).  
+- **Unlimited / per unit**: scales with usage or volume (e.g. $1 booking revenue, per review, per referral).
+"""
+
+@st.cache_data
+def load_tasks_default() -> pd.DataFrame:
+    """
+    Gebeya quest table — hard-coded from the study.
+    """
+    data = [
+        # LOYALTY & HEALTH
+        {
+            "category": "LOYALTY & HEALTH",
+            "task_name": "Daily Login",
+            "score": 5,
+            "participation_rate": 0.98,
+            "mean": 264,
+            "std": 60,
+            "min": 0,
+            "max": 365,
+            "Frequency": "Daily",
+        },
+        {
+            "category": "LOYALTY & HEALTH",
+            "task_name": "7-Day Login Streak",
+            "score": 50,
+            "participation_rate": 0.95,
+            "mean": 30,
+            "std": 12,
+            "min": 0,
+            "max": 52,
+            "Frequency": "Weekly",
+        },
+        {
+            "category": "LOYALTY & HEALTH",
+            "task_name": "Profile Update",
+            "score": 50,
+            "participation_rate": 0.90,
+            "mean": 8.4,
+            "std": 3.0,
+            "min": 0,
+            "max": 12,
+            "Frequency": "Monthly",
+        },
+        {
+            "category": "LOYALTY & HEALTH",
+            "task_name": "2FA activated",
+            "score": 100,
+            "participation_rate": 0.50,
+            "mean": 0.5,
+            "std": 0.4,
+            "min": 0,
+            "max": 1,
+            "Frequency": "One-time",
+        },
+        {
+            "category": "LOYALTY & HEALTH",
+            "task_name": "Business Health Check",
+            "score": 50,
+            "participation_rate": 0.50,
+            "mean": 0.5,
+            "std": 0.4,
+            "min": 0,
+            "max": 1,
+            "Frequency": "Yearly",
+        },
+        {
+            "category": "LOYALTY & HEALTH",
+            "task_name": "Initial 100% profile completion",
+            "score": 250,
+            "participation_rate": 0.05,
+            "mean": 0.05,
+            "std": 0.1,
+            "min": 0,
+            "max": 1,
+            "Frequency": "One-time",
+        },
+
+        # BUSINESS & FINANCIAL GROWTH
+        {
+            "category": "BUSINESS & FINANCIAL GROWTH",
+            "task_name": "$1 of Booking Revenue",
+            "score": 1,
+            "participation_rate": 0.85,
+            "mean": 1800,
+            "std": 1080,
+            "min": 0,
+            "max": 24000,
+            "Frequency": "Unlimited",
+        },
+        {
+            "category": "BUSINESS & FINANCIAL GROWTH",
+            "task_name": "$1 from 'Advance Pay' (bonus)",
+            "score": 0.5,
+            "participation_rate": 0.40,
+            "mean": 144,
+            "std": 86,
+            "min": 0,
+            "max": 9600,
+            "Frequency": "Unlimited",
+        },
+        {
+            "category": "BUSINESS & FINANCIAL GROWTH",
+            "task_name": "Active Paid Subscription",
+            "score": 100,
+            "participation_rate": 0.60,
+            "mean": 4.8,
+            "std": 2.4,
+            "min": 0,
+            "max": 12,
+            "Frequency": "Monthly",
+        },
+
+        # SKILL & TOOLS
+        {
+            "category": "SKILL & TOOLS",
+            "task_name": "Complete a Course",
+            "score": 100,
+            "participation_rate": 0.60,
+            "mean": 3.6,
+            "std": 2.0,
+            "min": 0,
+            "max": 12,
+            "Frequency": "Per Course",
+        },
+        {
+            "category": "SKILL & TOOLS",
+            "task_name": "Complete a Certification Track",
+            "score": 500,
+            "participation_rate": 0.30,
+            "mean": 0.3,
+            "std": 0.5,
+            "min": 0,
+            "max": 4,
+            "Frequency": "Per Course",
+        },
+        {
+            "category": "SKILL & TOOLS",
+            "task_name": "Connect a New Tool — per tool",
+            "score": 200,
+            "participation_rate": 0.30,
+            "mean": 0.3,
+            "std": 0.5,
+            "min": 0,
+            "max": 6,
+            "Frequency": "First time per tool",
+        },
+        {
+            "category": "SKILL & TOOLS",
+            "task_name": "Connect a New Tool — subsequent",
+            "score": 50,
+            "participation_rate": 0.40,
+            "mean": 1.2,
+            "std": 1.2,
+            "min": 0,
+            "max": 12,
+            "Frequency": "First time per tool",
+        },
+
+        # COMMUNITY & NETWORK EFFECTS
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Refer New Client (Sign-up)",
+            "score": 250,
+            "participation_rate": 0.50,
+            "mean": 3.6,
+            "std": 3.0,
+            "min": 0,
+            "max": 120,
+            "Frequency": "Per referral",
+        },
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Refer New Client (First Booking)",
+            "score": 1000,
+            "participation_rate": 0.40,
+            "mean": 1.8,
+            "std": 2.0,
+            "min": 0,
+            "max": 80,
+            "Frequency": "Per referral",
+        },
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Refer New Jitumer (Onboard)",
+            "score": 500,
+            "participation_rate": 0.35,
+            "mean": 1.2,
+            "std": 1.2,
+            "min": 0,
+            "max": 50,
+            "Frequency": "Per referral",
+        },
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Refer New Jitumer (5 Bookings)",
+            "score": 2500,
+            "participation_rate": 0.20,
+            "mean": 0.6,
+            "std": 0.8,
+            "min": 0,
+            "max": 30,
+            "Frequency": "Per referral",
+        },
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Upvote a helpful post",
+            "score": 25,
+            "participation_rate": 0.70,
+            "mean": 6.0,
+            "std": 15.0,
+            "min": 0,
+            "max": 200,
+            "Frequency": "Per upvote",
+        },
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Post/comment reaching ≥5 upvotes",
+            "score": 50,
+            "participation_rate": 0.50,
+            "mean": 6.0,
+            "std": 6.0,
+            "min": 0,
+            "max": 120,
+            "Frequency": "Per post",
+        },
+        {
+            "category": "COMMUNITY & NETWORK EFFECTS",
+            "task_name": "Featured 'How-I-Did-It' guide",
+            "score": 250,
+            "participation_rate": 0.10,
+            "mean": 0.6,
+            "std": 0.6,
+            "min": 0,
+            "max": 6,
+            "Frequency": "Per guide",
+        },
+
+        # QUALITY & REPUTATION
+        {
+            "category": "QUALITY & REPUTATION",
+            "task_name": "Receive a 5-Star Review",
+            "score": 100,
+            "participation_rate": 0.85,
+            "mean": 12.0,
+            "std": 7.0,
+            "min": 0,
+            "max": 240,
+            "Frequency": "Per review",
+        },
+        {
+            "category": "QUALITY & REPUTATION",
+            "task_name": "Maintain ≥4.8 avg rating (min 5 reviews in month)",
+            "score": 500,
+            "participation_rate": 0.50,
+            "mean": 4.8,
+            "std": 2.4,
+            "min": 0,
+            "max": 12,
+            "Frequency": "Monthly",
+        },
+    ]
+    return pd.DataFrame(data)
+
+
+def get_truncated_normal(mean, sd, low, upp, size):
+    if sd <= 0:
+        return np.full(size, max(mean, 0))
+    a, b = (low - mean) / sd, (upp - mean) / sd
+    return truncnorm.rvs(a, b, loc=mean, scale=sd, size=size)
+
+
+def simulate_points(
+    tasks: pd.DataFrame,
+    n_users: int = 5000,
+    horizon_days: int = 365,
+    instantiation_window: int = 365,
+    inactivity_threshold: int = 15,
+    penalty_pct: float = 0.05,
+    points_per_token: float = 100.0,
+    max_convertible_pct: float = 0.25,
+    random_seed: int = 42,
+    tier_cutoffs=(0.25, 0.5, 0.75),
+    tier_labels=None,
+):
+    """
+    Core simulation engine.
+
+    Returns:
+      - user_df: per-user summary (tiers, tokens)
+      - task_contrib: task-level expected contribution
+      - cumulative_points: [n_users, total_days] daily cumulated scores
+    """
+    if tier_labels is None:
+        tier_labels = ["Tier1", "Tier2", "Tier3", "Tier4"]
+
+    rng = np.random.default_rng(random_seed)
+
+    df = tasks.copy()
+    df = df.rename(columns=str.lower)
+
+    required_cols = [
+        "task_name",
+        "score",
+        "participation_rate",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "frequency",
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in task sheet: {missing}")
+
+    # per-user per-day points
+    total_days = horizon_days + instantiation_window
+    user_daily_points = np.zeros((n_users, total_days), dtype=float)
+
+    # onboarding day
+    instantiation_days = rng.integers(low=0, high=instantiation_window, size=n_users)
+
+    # -------- simulate tasks ----------
+    for _, row in df.iterrows():
+        score = float(row["score"])
+        p_participate = float(row["participation_rate"])
+        mean = float(row["mean"])
+        std = float(row["std"])
+        tmin = float(row["min"])
+        tmax = float(row["max"])
+        freq = str(row["frequency"]).strip()
+
+        active_mask = rng.random(n_users) < p_participate
+        n_active = active_mask.sum()
+        if n_active == 0 or score == 0:
+            continue
+
+        counts = get_truncated_normal(
+            mean=mean,
+            sd=std,
+            low=tmin,
+            upp=tmax,
+            size=n_active,
+        )
+        counts = np.maximum(np.round(counts), 0).astype(int)
+        active_indices = np.where(active_mask)[0]
+
+        for idx_user, n_events in zip(active_indices, counts):
+            if n_events <= 0:
+                continue
+
+            start_day = instantiation_days[idx_user]
+            end_day = start_day + horizon_days
+            end_day = min(end_day, total_days)
+            available_days = np.arange(start_day, end_day)
+            if available_days.size == 0:
+                continue
+
+            if freq.lower() in ["daily", "weekly", "monthly", "per course",
+                                "per referral", "per review", "per post",
+                                "per upvote", "per guide", "first time per tool"]:
+                n_events = min(n_events, available_days.size)
+                chosen_days = rng.choice(available_days, size=n_events, replace=False)
+            elif freq.lower() == "one-time" or freq.lower() == "yearly":
+                chosen_days = np.array([rng.choice(available_days)])
+            else:  # "Unlimited" or unknown-like
+                n_events = min(n_events, available_days.size)
+                chosen_days = rng.choice(available_days, size=n_events, replace=True)
+
+            user_daily_points[idx_user, chosen_days] += score
+
+    # -------- erosion ----------
+    inactivity_threshold = max(int(inactivity_threshold), 1)
+    penalty_pct = float(penalty_pct)
+
+    cumulative_points = np.zeros_like(user_daily_points)
+    for i in range(n_users):
+        last_active_day = instantiation_days[i]
+        cum = 0.0
+
+        for day in range(instantiation_days[i], instantiation_days[i] + horizon_days):
+            if day >= total_days:
+                break
+
+            pts = user_daily_points[i, day]
+            if pts > 0:
+                cum += pts
+                last_active_day = day
+            else:
+                idle = day - last_active_day
+                if idle > inactivity_threshold and cum > 0:
+                    penalty = penalty_pct * cum
+                    cum = max(cum - penalty, 0)
+                    last_active_day = day
+
+            cumulative_points[i, day] = cum
+
+    final_points = cumulative_points[:, : total_days].max(axis=1)
+
+    # -------- tokenisation ----------
+    convertible_points = final_points * max_convertible_pct
+    tokens = convertible_points / max(points_per_token, 1e-6)
+
+    user_df = pd.DataFrame({
+        "user_id": np.arange(n_users),
+        "onboarding_day": instantiation_days,
+        "final_points": final_points,
+        "convertible_points": convertible_points,
+        "g_tokens": tokens,
+    })
+
+    # -------- tiers (custom cutoffs) ----------
+    # cutoffs = quantiles of final_points distribution
+    q1, q2, q3 = tier_cutoffs
+    quantiles = user_df["final_points"].quantile([q1, q2, q3]).to_dict()
+
+    def tag_tier(x):
+        if x <= quantiles.get(q1, 0):
+            return tier_labels[0]
+        elif x <= quantiles.get(q2, 0):
+            return tier_labels[1]
+        elif x <= quantiles.get(q3, 0):
+            return tier_labels[2]
+        else:
+            return tier_labels[3]
+
+    user_df["tier"] = user_df["final_points"].apply(tag_tier)
+
+    # -------- task-level expected contributions ----------
+    df["annual_expected_points_per_user"] = df["score"] * df["participation_rate"] * df["mean"]
+    total_expected = df["annual_expected_points_per_user"].sum()
+    if total_expected > 0:
+        df["expected_share_of_points"] = df["annual_expected_points_per_user"] / total_expected
+    else:
+        df["expected_share_of_points"] = 0.0
+
+    return user_df, df, cumulative_points[:, : total_days]
+
+
+# ------------------------------------------------------------
+# SIDEBAR — PARAMETERS
+# ------------------------------------------------------------
+st.sidebar.header("⚙️ Simulation parameters")
+
+if "tasks_df" not in st.session_state:
+    st.session_state["tasks_df"] = load_tasks_default()
+
+if st.sidebar.button("Reset tasks to default"):
+    st.session_state["tasks_df"] = load_tasks_default()
+
+n_users = st.sidebar.slider(
+    "Number of simulated users",
+    min_value=500,
+    max_value=20000,
+    value=5000,
+    step=500,
+    help="More users = smoother distributions but slower simulation."
+)
+
+horizon_days = st.sidebar.slider(
+    "Simulation horizon (days)",
+    min_value=90,
+    max_value=365,
+    value=365,
+    step=15,
+    help="Length of the PointsFi campaign / loyalty program (max 365)."
+)
+
+instantiation_window = st.sidebar.slider(
+    "User onboarding spread (days)",
+    min_value=1,
+    max_value=365,
+    value=365,
+    help="Users are randomly instantiated between day 0 and this day."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("⏳ Erosion (inactivity penalty)")
+
+inactivity_threshold = st.sidebar.slider(
+    "Days of inactivity before penalty",
+    min_value=3,
+    max_value=60,
+    value=15,
+    help="If a user stays inactive longer than this, their accumulated points start to erode."
+)
+
+penalty_pct = st.sidebar.slider(
+    "Penalty when threshold is breached (%)",
+    min_value=1,
+    max_value=50,
+    value=5,
+    help="When inactivity exceeds the threshold, this percentage of the current score is removed once."
+) / 100.0
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🏅 Tier sizing (share of user base)")
+
+bronze_pct = st.sidebar.slider(
+    f"{TIER_LABELS[0]} tier (%)",
+    min_value=5,
+    max_value=80,
+    value=25,
+    step=1,
+    help=f"Share of users in the entry tier ({TIER_LABELS[0]})."
+)
+silver_pct = st.sidebar.slider(
+    f"{TIER_LABELS[1]} tier (%)",
+    min_value=5,
+    max_value=80,
+    value=25,
+    step=1,
+    help=f"Share of users in the second tier ({TIER_LABELS[1]})."
+)
+gold_pct = st.sidebar.slider(
+    f"{TIER_LABELS[2]} tier (%)",
+    min_value=5,
+    max_value=80,
+    value=25,
+    step=1,
+    help=f"Share of users in the third tier ({TIER_LABELS[2]})."
+)
+
+total_first_three = bronze_pct + silver_pct + gold_pct
+if total_first_three >= 100:
+    st.sidebar.warning("Sum of first three tiers ≥ 100%. "
+                       "Top tier will collapse; consider lowering some percentages.")
+
+# Cumulative quantiles (clamp to <1)
+q1 = min(bronze_pct / 100.0, 0.95)
+q2 = min((bronze_pct + silver_pct) / 100.0, 0.97)
+q3 = min((bronze_pct + silver_pct + gold_pct) / 100.0, 0.99)
+tier_cutoffs = (q1, q2, q3)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("💱 Tokenisation")
+
+points_per_token = st.sidebar.number_input(
+    "Points per G-Token",
+    min_value=1.0,
+    max_value=1e6,
+    value=1000.0,
+    step=100.0,
+    help="Conversion rate between loyalty points and the on-chain G-Token."
+)
+
+max_convertible_pct = st.sidebar.slider(
+    "Max share of points convertible to G-Tokens",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.25,
+    step=0.05,
+    help="Cap the fraction of points that can be bridged on-chain to control token supply."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("💵 Market impact of conversion")
+
+token_price_usd = st.sidebar.number_input(
+    "Spot price of G-Token ($)",
+    min_value=0.0,
+    max_value=1000.0,
+    value=0.25,
+    step=0.01,
+    help="Current or target market price of the G-Token."
+)
+
+daily_sell_cap = st.sidebar.number_input(
+    "Max G-Tokens sellable per day",
+    min_value=0.0,
+    max_value=10_000_000.0,
+    value=50_000.0,
+    step=10_000.0,
+    help="Risk / MM limit on how many G-Tokens can be sold per day."
+)
+
+random_seed = st.sidebar.number_input(
+    "Random seed",
+    min_value=0,
+    max_value=10_000,
+    value=42,
+    step=1,
+    help="For reproducible scenarios in client workshops."
+)
+
+# ------------------------------------------------------------
+# TABS
+# ------------------------------------------------------------
+tab_overview, tab_tasks, tab_dist, tab_paths = st.tabs(
+    ["📊 Overview", "📋 Tasks editor", "📈 Distributions", "🏆 Score paths & leaderboard"]
+)
+
+with tab_tasks:
+    st.subheader("Task configuration (editable)")
+    st.markdown(
+        "Tableau des **quests / tâches** Gebeya. "
+        "Le client peut ajuster les scores, taux de participation, "
+        "volumes annuels etc. Les changements sont conservés tant que "
+        "la session reste ouverte."
+    )
+    st.markdown(FREQUENCY_HELP)
+
+    edited_df = st.data_editor(
+        st.session_state["tasks_df"],
+        use_container_width=True,
+        num_rows="dynamic",
+        hide_index=True,
+        key="tasks_editor",
+    )
+    st.session_state["tasks_df"] = edited_df
+
+# Launch sim
+run_sim = st.button("🚀 Run 1-year simulation")
+
+if run_sim:
+    tasks_df = st.session_state["tasks_df"]
+    try:
+        user_df, enriched_tasks, cumulative_points = simulate_points(
+            tasks=tasks_df,
+            n_users=n_users,
+            horizon_days=horizon_days,
+            instantiation_window=instantiation_window,
+            inactivity_threshold=inactivity_threshold,
+            penalty_pct=penalty_pct,
+            points_per_token=points_per_token,
+            max_convertible_pct=max_convertible_pct,
+            random_seed=random_seed,
+            tier_cutoffs=tier_cutoffs,
+            tier_labels=TIER_LABELS,
+        )
+    except Exception as e:
+        st.error(f"Simulation failed: {e}")
+    else:
+        total_tokens = user_df["g_tokens"].sum()
+        # sell-side / dilution estimates
+        max_tokens_sellable_over_period = min(total_tokens, daily_sell_cap * horizon_days)
+        potential_usd_sell = max_tokens_sellable_over_period * token_price_usd
+        daily_usd_cap = daily_sell_cap * token_price_usd
+
+        # ---------------- OVERVIEW ----------------
+        with tab_overview:
+            st.subheader("Key metrics")
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric(
+                    "Avg final points / user",
+                    f"{user_df['final_points'].mean():.0f}",
+                    help="Mean of the final decayed points distribution."
+                )
+            with col2:
+                st.metric(
+                    "Median points / user",
+                    f"{user_df['final_points'].median():.0f}",
+                    help="50th percentile of user scores."
+                )
+            with col3:
+                st.metric(
+                    "90th percentile points",
+                    f"{user_df['final_points'].quantile(0.90):.0f}",
+                    help="Top-10% threshold, useful to size highest rewards."
+                )
+            with col4:
+                st.metric(
+                    "Total G-Tokens minted (est.)",
+                    f"{total_tokens:.0f}",
+                    help="Assuming all eligible users redeem the maximum allowed share of points."
+                )
+
+            st.markdown("### Tier breakdown")
+            tier_counts = (
+                user_df["tier"].value_counts()
+                .reindex(TIER_LABELS)
+                .fillna(0)
+                .astype(int)
+            )
+            tier_df = tier_counts.reset_index()
+            tier_df.columns = ["Tier", "Users"]
+            tier_df["Share (%)"] = tier_df["Users"] / len(user_df) * 100.0
+
+            st.dataframe(
+                tier_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            fig, ax = plt.subplots()
+            ax.bar(tier_df["Tier"], tier_df["Users"])
+            ax.set_ylabel("Number of users")
+            ax.set_title("Users per tier")
+            st.pyplot(fig)
+
+            st.markdown("### Task contribution (expected, per user)")
+            contrib_cols = [
+                "category", "task_name", "score", "participation_rate", "mean",
+                "annual_expected_points_per_user", "expected_share_of_points"
+            ]
+            st.dataframe(
+                enriched_tasks[contrib_cols],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.markdown("### Conversion impact on token (sell-side)")
+
+            col5, col6, col7 = st.columns(3)
+            with col5:
+                st.metric(
+                    "Daily sell cap (USD)",
+                    f"{daily_usd_cap:,.0f}",
+                    help="Max daily sell pressure from G-Token conversions at current price."
+                )
+            with col6:
+                st.metric(
+                    "Max tokens sellable over horizon",
+                    f"{max_tokens_sellable_over_period:,.0f}",
+                    help="Min(total minted, daily cap × horizon)."
+                )
+            with col7:
+                st.metric(
+                    "Max sell volume over horizon (USD)",
+                    f"{potential_usd_sell:,.0f}",
+                    help="Upper bound on sell-side volume if users fully use the cap."
+                )
+
+        # ---------------- DISTRIBUTIONS ----------------
+        with tab_dist:
+            st.subheader("Score & token distributions")
+
+            st.markdown("**Final points per user**")
+            fig1, ax1 = plt.subplots()
+            ax1.hist(user_df["final_points"], bins=40)
+            ax1.set_xlabel("Final points")
+            ax1.set_ylabel("Number of users")
+            st.pyplot(fig1)
+
+            st.markdown("**G-Tokens per user**")
+            fig2, ax2 = plt.subplots()
+            ax2.hist(user_df["g_tokens"], bins=40)
+            ax2.set_xlabel("G-Tokens")
+            ax2.set_ylabel("Number of users")
+            st.pyplot(fig2)
+
+            st.markdown("### Raw user-level output (sample)")
+            st.dataframe(
+                user_df.sample(min(200, len(user_df)), random_state=random_seed),
+                use_container_width=True,
+            )
+
+        # ---------------- SCORE PATHS & LEADERBOARD ----------------
+        with tab_paths:
+            st.subheader("Score evolution over time")
+
+            st.markdown(
+                "Courbes du score cumulatif sur la période, pour un échantillon "
+                "d'utilisateurs. L'axe des X est borné à l'horizon (max 365 jours)."
+            )
+
+            max_day_plot = horizon_days  # <= 365
+            days = np.arange(max_day_plot)
+            n_plot_users = min(80, len(user_df))
+            sampled_ids = user_df.sample(n_plot_users, random_state=random_seed)["user_id"].values
+
+            fig3, ax3 = plt.subplots(figsize=(8, 5))
+            for uid in sampled_ids:
+                ax3.plot(days, cumulative_points[uid, :max_day_plot], alpha=0.4)
+            ax3.set_xlabel("Day")
+            ax3.set_ylabel("Cumulative score")
+            ax3.set_title("Score evolution of sampled users (0–365 days)")
+            st.pyplot(fig3)
+
+            st.markdown("### Global leaderboard")
+
+            top_n = st.number_input(
+                "Number of users to display",
+                min_value=5,
+                max_value=200,
+                value=50,
+                step=5,
+                help="Size of the leaderboard table."
+            )
+
+            leaderboard = (
+                user_df.sort_values("final_points", ascending=False)
+                .assign(rank=lambda d: np.arange(1, len(d) + 1))
+                .head(int(top_n))
+                .reset_index(drop=True)
+            )
+
+            st.dataframe(
+                leaderboard[["rank", "user_id", "tier", "final_points", "g_tokens"]],
+                use_container_width=True,
+            )
+
+            st.markdown("### Tier-level summary")
+
+            tier_leaderboard = (
+                user_df.groupby("tier", as_index=False)
+                .agg(
+                    users=("user_id", "count"),
+                    mean_points=("final_points", "mean"),
+                    p90_points=("final_points", lambda s: s.quantile(0.9)),
+                    mean_tokens=("g_tokens", "mean"),
+                )
+                .sort_values("mean_points", ascending=False)
+            )
+
+            st.dataframe(
+                tier_leaderboard,
+                use_container_width=True,
+            )
+
+else:
+    with tab_overview:
+        st.info(
+            "👈 Configure les paramètres dans la sidebar, ajuste les tâches dans **Tasks editor**, "
+            "puis clique sur **Run 1-year simulation**."
+        )
