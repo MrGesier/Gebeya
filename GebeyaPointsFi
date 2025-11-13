@@ -384,9 +384,18 @@ def simulate_points(
             if available_days.size == 0:
                 continue
 
-            if freq.lower() in ["daily", "weekly", "monthly", "per course",
-                                "per referral", "per review", "per post",
-                                "per upvote", "per guide", "first time per tool"]:
+            if freq.lower() in [
+                "daily",
+                "weekly",
+                "monthly",
+                "per course",
+                "per referral",
+                "per review",
+                "per post",
+                "per upvote",
+                "per guide",
+                "first time per tool",
+            ]:
                 n_events = min(n_events, available_days.size)
                 chosen_days = rng.choice(available_days, size=n_events, replace=False)
             elif freq.lower() == "one-time" or freq.lower() == "yearly":
@@ -438,7 +447,6 @@ def simulate_points(
     })
 
     # -------- tiers (custom cutoffs) ----------
-    # cutoffs = quantiles of final_points distribution
     q1, q2, q3 = tier_cutoffs
     quantiles = user_df["final_points"].quantile([q1, q2, q3]).to_dict()
 
@@ -602,6 +610,15 @@ daily_sell_cap = st.sidebar.number_input(
     help="Risk / MM limit on how many G-Tokens can be sold per day."
 )
 
+circulating_supply_1y = st.sidebar.number_input(
+    "Circulating supply at 1 year (tokens)",
+    min_value=0.0,
+    max_value=10_000_000_000.0,
+    value=10_000_000.0,
+    step=100_000.0,
+    help="Expected circulating supply of the G-Token at the end of year 1."
+)
+
 random_seed = st.sidebar.number_input(
     "Random seed",
     min_value=0,
@@ -637,7 +654,9 @@ with tab_tasks:
     )
     st.session_state["tasks_df"] = edited_df
 
-# Launch sim
+# ------------------------------------------------------------
+# RUN SIMULATION
+# ------------------------------------------------------------
 run_sim = st.button("🚀 Run 1-year simulation")
 
 if run_sim:
@@ -660,10 +679,18 @@ if run_sim:
         st.error(f"Simulation failed: {e}")
     else:
         total_tokens = user_df["g_tokens"].sum()
-        # sell-side / dilution estimates
+
+        # sell-side / dilution estimates under daily cap
         max_tokens_sellable_over_period = min(total_tokens, daily_sell_cap * horizon_days)
         potential_usd_sell = max_tokens_sellable_over_period * token_price_usd
         daily_usd_cap = daily_sell_cap * token_price_usd
+
+        # full conversion (no cap)
+        full_conversion_usd = total_tokens * token_price_usd
+        if circulating_supply_1y > 0:
+            full_conversion_vs_circ_pct = (total_tokens / circulating_supply_1y) * 100.0
+        else:
+            full_conversion_vs_circ_pct = 0.0
 
         # ---------------- OVERVIEW ----------------
         with tab_overview:
@@ -746,9 +773,23 @@ if run_sim:
                 )
             with col7:
                 st.metric(
-                    "Max sell volume over horizon (USD)",
+                    "Max sell volume over horizon (USD, with cap)",
                     f"{potential_usd_sell:,.0f}",
-                    help="Upper bound on sell-side volume if users fully use the cap."
+                    help="Upper bound on sell-side volume if users fully use the daily cap."
+                )
+
+            col8, col9 = st.columns(2)
+            with col8:
+                st.metric(
+                    "Full-conversion volume (USD, no cap)",
+                    f"{full_conversion_usd:,.0f}",
+                    help="Value of all G-Tokens minted if 100% are sold at the given price."
+                )
+            with col9:
+                st.metric(
+                    "Full conversion vs 1Y circ. supply",
+                    f"{full_conversion_vs_circ_pct:,.1f} %",
+                    help="Minted G-Tokens as % of circulating supply at year 1."
                 )
 
         # ---------------- DISTRIBUTIONS ----------------
