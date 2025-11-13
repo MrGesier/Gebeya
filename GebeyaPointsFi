@@ -298,6 +298,31 @@ def get_truncated_normal(mean, sd, low, upp, size):
     return truncnorm.rvs(a, b, loc=mean, scale=sd, size=size)
 
 
+def lorenz_and_gini(values: np.ndarray):
+    """Compute Lorenz curve coordinates and Gini coefficient."""
+    x = np.array(values, dtype=float)
+    x = x[np.isfinite(x) & (x >= 0)]
+    n = len(x)
+    if n == 0:
+        # degenerate
+        return np.array([0.0, 1.0]), np.array([0.0, 1.0]), 0.0
+
+    x_sorted = np.sort(x)
+    cumvals = np.cumsum(x_sorted)
+    total = cumvals[-1]
+    if total <= 0:
+        # everybody at 0
+        population = np.linspace(0, 1, n + 1)
+        lorenz = np.linspace(0, 1, n + 1)
+        return population, lorenz, 0.0
+
+    lorenz = np.concatenate(([0], cumvals / total))
+    population = np.linspace(0, 1, n + 1)
+    # Gini = 1 - 2 * area under Lorenz curve
+    gini = 1.0 - 2.0 * np.trapz(lorenz, population)
+    return population, lorenz, gini
+
+
 def simulate_points(
     tasks: pd.DataFrame,
     n_users: int = 5000,
@@ -796,19 +821,49 @@ if run_sim:
         with tab_dist:
             st.subheader("Score & token distributions")
 
-            st.markdown("**Final points per user**")
-            fig1, ax1 = plt.subplots()
-            ax1.hist(user_df["final_points"], bins=40)
-            ax1.set_xlabel("Final points")
-            ax1.set_ylabel("Number of users")
-            st.pyplot(fig1)
+            col_left, col_right = st.columns(2)
 
-            st.markdown("**G-Tokens per user**")
-            fig2, ax2 = plt.subplots()
-            ax2.hist(user_df["g_tokens"], bins=40)
-            ax2.set_xlabel("G-Tokens")
-            ax2.set_ylabel("Number of users")
-            st.pyplot(fig2)
+            with col_left:
+                st.markdown("**Final points per user**")
+                fig1, ax1 = plt.subplots()
+                ax1.hist(user_df["final_points"], bins=40)
+                ax1.set_xlabel("Final points")
+                ax1.set_ylabel("Number of users")
+                st.pyplot(fig1)
+
+            with col_right:
+                st.markdown("**G-Tokens per user**")
+                fig2, ax2 = plt.subplots()
+                ax2.hist(user_df["g_tokens"], bins=40)
+                ax2.set_xlabel("G-Tokens")
+                ax2.set_ylabel("Number of users")
+                st.pyplot(fig2)
+
+            # Lorenz curve & Gini for final_points
+            st.markdown("### Inequality of points (Lorenz curve & Gini)")
+
+            pop_share, lorenz, gini_points = lorenz_and_gini(user_df["final_points"].values)
+
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                st.metric(
+                    "Gini coefficient (points)",
+                    f"{gini_points:.3f}",
+                    help="0 = perfectly equal distribution, 1 = maximally unequal."
+                )
+            with col_g2:
+                st.write(
+                    "Higher Gini = more concentrated points among a small share of users."
+                )
+
+            fig_l, ax_l = plt.subplots()
+            ax_l.plot(pop_share, lorenz, label="Lorenz curve")
+            ax_l.plot([0, 1], [0, 1], linestyle="--", label="Perfect equality")
+            ax_l.set_xlabel("Cumulative share of users")
+            ax_l.set_ylabel("Cumulative share of points")
+            ax_l.set_title("Lorenz curve of final points")
+            ax_l.legend()
+            st.pyplot(fig_l)
 
             st.markdown("### Raw user-level output (sample)")
             st.dataframe(
